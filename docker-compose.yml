@@ -1,0 +1,94 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  db:
+    image: postgres:15-alpine
+    container_name: task_management_db
+    environment:
+      POSTGRES_DB: task_management
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  # Redis for background task queue (optional, for future enhancements)
+  redis:
+    image: redis:7-alpine
+    container_name: task_management_redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # FastAPI Application
+  api:
+    build: .
+    container_name: task_management_api
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/task_management
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=your-secret-key-change-this-in-production-please-make-it-long-and-secure
+      - ENV=development
+      - LOG_LEVEL=INFO
+      - API_V1_STR=/api/v1
+      - PROJECT_NAME=Task Management API
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./app:/app/app
+      - ./alembic:/app/alembic
+      - ./alembic.ini:/app/alembic.ini
+    command: >
+      sh -c "
+        alembic upgrade head &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+
+  # Development setup with hot reload
+  api-dev:
+    build: .
+    container_name: task_management_api_dev
+    ports:
+      - "8001:8000"
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://postgres:postgres@db:5432/task_management
+      - REDIS_URL=redis://redis:6379/0
+      - SECRET_KEY=your-secret-key-change-this-in-production-please-make-it-long-and-secure
+      - ENV=development
+      - LOG_LEVEL=INFO
+      - API_V1_STR=/api/v1
+      - PROJECT_NAME=Task Management API
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./:/app
+    command: >
+      sh -c "
+        alembic upgrade head &&
+        uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+      "
+    profiles:
+      - dev
+
+volumes:
+  postgres_data:
